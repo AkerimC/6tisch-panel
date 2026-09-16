@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Calisma zamanı veritabani (ilk acilista otomatik olusur)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# IDE / sistem
+.DS_Store
+.idea/
+.vscode/

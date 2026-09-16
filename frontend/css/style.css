@@ -1,0 +1,214 @@
+/* ── panel teması: Hyprland matugen scheme eşlemesi ───────────────
+   kaynak: ~/.config/hypr/scheme/current.conf (Material You dark)   */
+
+:root {
+  /* scheme */
+  --bg: #131317;            /* $background */
+  --bg2: #1b1b1f;           /* $surfaceContainerLow */
+  --card: #1f1f23;          /* $surfaceContainer */
+  --card2: #292a2e;         /* $surfaceContainerHigh */
+  --line: #45464f;          /* $outlineVariant */
+  --line2: #343438;         /* $surfaceContainerHighest */
+  --txt: #e4e1e7;           /* $onBackground */
+  --dim: #c6c5d1;           /* $onSurfaceVariant */
+  --faint: #8f909a;         /* $outline */
+  --acc: #b7c4ff;           /* $primary */
+  --onacc: #1e2d60;         /* $onPrimary */
+  --acc2: #b5bbff;          /* $mauve — enstrümante vurgusu */
+  --tert: #f1b3e6;          /* $tertiary */
+  --ok: #b5ccba;            /* $success */
+  --warn: #fbbf24;
+  --bad: #ffb4ab;           /* $error */
+  --bandL: #34d399;         /* veri rengi: Band L */
+  --bandO: #fb923c;         /* veri rengi: Band O */
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font: 13px/1.55 "Inter", "Segoe UI", system-ui, sans-serif;
+}
+.mono { font-family: var(--mono); }
+::selection { background: var(--acc); color: var(--onacc); }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 8px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--line); }
+
+/* ── üst bar ── */
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 20px; border-bottom: 1px solid var(--line2);
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.brand { display: flex; gap: 11px; align-items: center; }
+.logo { font-size: 19px; color: var(--acc); }
+.brand h1 { margin: 0; font-size: 15px; letter-spacing: .2px; color: var(--txt); font-weight: 650; }
+.brand .sub { color: var(--faint); font-size: 11.5px; margin-top: 1px; }
+
+.livestrip { display: flex; gap: 7px; flex-wrap: wrap; }
+.pill {
+  background: var(--card); border: 1px solid var(--line2); border-radius: 999px;
+  padding: 4px 12px; display: flex; gap: 7px; align-items: center;
+}
+.pill .k { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: 1.1px; }
+.pill .v { font-size: 12px; font-weight: 650; font-family: var(--mono); }
+.pill.conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.pill.conn.live .dot { background: var(--acc); }
+.pill.conn.down .dot { background: var(--bad); }
+
+/* ── sekmeler ── */
+nav {
+  display: flex; gap: 2px; padding: 8px 20px 0; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line2);
+  background: var(--bg);
+}
+nav button {
+  background: transparent; color: var(--faint); border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 13px; font-size: 12.5px; cursor: pointer; font-weight: 550;
+  font-family: inherit; border-radius: 8px 8px 0 0;
+}
+nav button:hover { color: var(--txt); background: var(--bg2); }
+nav button.on { color: var(--acc); border-bottom-color: var(--acc); background: var(--bg2); }
+
+main { padding: 16px 20px 30px; }
+.tab { display: none; }
+.tab.on { display: block; }
+
+footer {
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 11px 20px; color: var(--faint); font-size: 11.5px;
+  border-top: 1px solid var(--line2);
+}
+
+/* ── kartlar ── */
+.grid { display: grid; gap: 14px; }
+.grid.c2 { grid-template-columns: 1fr 1fr; }
+.grid.c3 { grid-template-columns: repeat(3, 1fr); }
+.grid.c4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 1100px) { .grid.c4 { grid-template-columns: 1fr 1fr; } .grid.c3 { grid-template-columns: 1fr; } }
+@media (max-width: 800px)  { .grid.c2 { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line2); border-radius: 12px; padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.28);
+}
+.card h3 {
+  margin: 0 0 10px; font-size: 12.5px; letter-spacing: .2px;
+  color: var(--txt); font-weight: 650;
+}
+.card h3 small { color: var(--faint); font-weight: 400; margin-left: 8px; }
+.card .hint { color: var(--faint); font-size: 11.5px; }
+
+.kpi .num { font-size: 25px; font-weight: 700; font-family: var(--mono); color: var(--txt); }
+.kpi .lbl { color: var(--dim); font-size: 11.5px; margin-top: 2px; }
+.kpi .sub2 { color: var(--faint); font-size: 11px; margin-top: 3px; }
+
+/* ── tablo ── */
+table.t { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.t th {
+  text-align: left; color: var(--faint); font-weight: 600; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .9px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+table.t td { padding: 6px 8px; border-bottom: 1px solid var(--line2); }
+table.t tr:hover td { background: var(--card2); }
+table.t td.mono { font-family: var(--mono); }
+
+/* ── etiketler: material pill ── */
+.tag {
+  display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 10.5px;
+  font-weight: 700; letter-spacing: .4px;
+  border: 1px solid var(--line); color: var(--dim);
+}
+.tag.L  { color: var(--bandL); border-color: rgba(52,211,153,.45); background: rgba(52,211,153,.08); }
+.tag.O  { color: var(--bandO); border-color: rgba(251,146,60,.45); background: rgba(251,146,60,.08); }
+.tag.warn { color: var(--warn); border-color: rgba(251,191,36,.45); background: rgba(251,191,36,.08); }
+.tag.bad  { color: var(--bad); border-color: rgba(255,180,171,.5); background: rgba(255,180,171,.08); }
+.tag.info { color: var(--acc); border-color: rgba(183,196,255,.5); background: rgba(183,196,255,.08); }
+
+/* ── olay akışı ── */
+.feed { max-height: 330px; overflow: auto; }
+.feed .ev { display: flex; gap: 10px; padding: 6px 4px; border-bottom: 1px solid var(--line2); font-size: 12px; align-items: baseline; }
+.feed .ev time { color: var(--faint); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+
+/* ── form ── */
+label.f { display: block; color: var(--dim); font-size: 11.5px; margin: 10px 0 4px; }
+input[type=text], select, input[type=number] {
+  width: 100%; background: var(--bg2); color: var(--txt); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; font-size: 12.5px; font-family: inherit;
+}
+input[type=range] { width: 100%; accent-color: var(--acc); }
+.btn {
+  background: var(--acc); color: var(--onacc); border: none;
+  padding: 9px 18px; border-radius: 999px; font-weight: 650; cursor: pointer; font-size: 12.5px;
+  font-family: inherit;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
+.btn.ghost.on { color: var(--acc); border-color: var(--acc); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 3px 11px; border-radius: 999px; border: 1px solid var(--line2);
+  background: var(--bg2); color: var(--dim); cursor: pointer; font-size: 11.5px;
+  font-family: var(--mono);
+}
+.chip:hover { color: var(--txt); border-color: var(--faint); }
+.chip.on { border-color: var(--acc); color: var(--acc); background: rgba(183,196,255,.12); }
+.chip.inst { border-color: rgba(181,187,255,.6); }
+
+/* ── svg ── */
+svg text { font-family: var(--mono); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--dim); font-size: 11.5px; margin-top: 8px; }
+.legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+/* ── slotframe ── */
+.sf-wrap { overflow-x: auto; }
+.slotcell { cursor: pointer; }
+.slotcell:hover { stroke: #e4e1e7; stroke-width: 1.4; }
+.sf-nowcol { pointer-events: none; }
+
+/* ── tooltip ── */
+#tip {
+  position: fixed; display: none; z-index: 50; pointer-events: none;
+  background: #26262bee; border: 1px solid var(--acc); border-radius: 10px;
+  padding: 7px 10px; font-size: 11.5px; color: var(--txt); font-family: var(--mono);
+  box-shadow: 0 6px 20px rgba(0,0,0,.4);
+}
+
+/* ── topoloji ── */
+#topo-svg .edge { stroke: var(--line); }
+#topo-svg .edge:hover { stroke: var(--acc); }
+.tnode { cursor: pointer; }
+.tnode:hover circle { r: 13; }
+.tnode text { fill: var(--faint); font-size: 10px; }
+
+.drawer {
+  position: fixed; right: 0; top: 0; bottom: 0; width: 380px; max-width: 92vw;
+  background: #1b1b1ff8; border-left: 1px solid var(--line2); z-index: 60;
+  padding: 18px; overflow: auto; transform: translateX(105%); transition: transform .18s ease;
+}
+.drawer.open { transform: none; }
+.drawer h2 { margin: 0 0 4px; font-size: 18px; font-family: var(--mono); color: var(--txt); }
+.drawer .close { position: absolute; right: 12px; top: 12px; cursor: pointer; color: var(--dim); font-size: 17px; border: none; background: none; }
+
+/* ── mimari sema ── */
+.arch-flow { stroke-dasharray: 6 6; animation: dash 1.3s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -24; } }
+
+.pulse { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+
+.scroll-x { overflow-x: auto; }
+.formula {
+  font-family: var(--mono); background: var(--bg2); border: 1px solid var(--line2);
+  padding: 10px 14px; border-radius: 10px; font-size: 14px;
+}
+.formula .hl { color: var(--acc); font-weight: 700; }

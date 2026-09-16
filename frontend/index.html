@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>6TiSCH İzleme ve Konfigürasyon Paneli — 868 MHz</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%231f1f23'/><rect x='3' y='7' width='10' height='2' rx='1' fill='%23b7c4ff'/><rect x='7' y='3' width='2' height='10' rx='1' fill='%23f1b3e6'/></svg>">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">◉</div>
+    <div>
+      <h1>6TiSCH İzleme ve Konfigürasyon Paneli</h1>
+      <div class="sub">868 MHz Sub-GHz · Zaman Paylaşımlı Kanal Atlamalı Ağ · Canlı İzleme ve Konfigürasyon</div>
+    </div>
+  </div>
+  <div class="livestrip" id="livestrip">
+    <div class="pill"><span class="k">ASN</span><span class="v mono" id="hdr-asn">—</span></div>
+    <div class="pill"><span class="k">Slot</span><span class="v mono" id="hdr-slot">—</span></div>
+    <div class="pill"><span class="k">Kanal</span><span class="v mono" id="hdr-freq">—</span></div>
+    <div class="pill"><span class="k">Bant</span><span class="v" id="hdr-band">—</span></div>
+    <div class="pill conn" id="hdr-conn"><span class="dot"></span><span class="v" id="hdr-conn-t">bağlanıyor…</span></div>
+  </div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="overview" class="on">Genel Bakış</button>
+  <button data-tab="slotframe">Slotframe</button>
+  <button data-tab="slotfreq">Slot-Frekans</button>
+  <button data-tab="topology">Kapsama / Topoloji</button>
+  <button data-tab="energy">Enerji Profili</button>
+  <button data-tab="routing">Yönlendirme</button>
+  <button data-tab="config">Konfigürasyon</button>
+</nav>
+
+<div id="tip"></div>
+
+<main>
+  <section id="tab-overview" class="tab on"></section>
+  <section id="tab-slotframe" class="tab"></section>
+  <section id="tab-slotfreq" class="tab"></section>
+  <section id="tab-topology" class="tab"></section>
+  <section id="tab-energy" class="tab"></section>
+  <section id="tab-routing" class="tab"></section>
+  <section id="tab-config" class="tab"></section>
+</main>
+
+<footer>
+  <span>Web Tabanlı İzleme ve Konfigürasyon Arayüzü · Contiki-NG / TSCH / 6TiSCH · 57 slot × 17 ms = 969 ms slotframe</span>
+  <span class="mono" id="foot-ts"></span>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
