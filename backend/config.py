@@ -32,6 +32,7 @@ NOISE_FLOOR = -100.0 # dBm, 150 kbps 2-FSK
 
 DUTY_WINDOW_S = 30   # gorev dongusu penceresi (makale: 30 s pencere medyan/p90)
 AIRTIME_MS = 3.8     # kadre basi havada kalma suresi (makale: medyan 3.5-4.1 ms)
+TX_POWER_DEFAULT_DBM = 14.0  # dugum baslangic iletim gucu (NodeState + apply_config tabani)
 
 # ---- Topoloji (makale Sekil 14 + Tablo 14) ----------------------------------
 # id: (hop, parent, rssi_seed, instrumented, tx_rate, subtree)

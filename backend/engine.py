@@ -24,6 +24,7 @@ class NodeState:
         self.hop = hop
         self.parent = parent
         self.rssi_seed = float(rssi_seed)
+        self.tx_power_dbm = C.TX_POWER_DEFAULT_DBM
         self.instrumented = instrumented
         self.tx_rate = float(tx_rate)
         self.tx_rate_base = float(tx_rate)  # geri beslemesiz taban (drift yok)
@@ -385,10 +386,18 @@ class Engine:
         n = self.nodes.get(node_id)
         if not n:
             raise KeyError(node_id)
+        # Ayni TX gucunu tekrar uygulamak durumu veya islem kaydini degistirmez.
+        if set(params) == {"tx_power_dbm"} and float(params["tx_power_dbm"]) == n.tx_power_dbm:
+            return {"status": "2.04 Changed", "method": "PUT",
+                    "target": f"coap://[fd00::c30c:0:0:{node_id}]/a/cfg",
+                    "payload": json.dumps(params, separators=(",", ":")),
+                    "ts": t, "unchanged": True}
         # etkiler: TX gucu -> RSSI/ETX; RSSI esigi -> bant ayrilmasi
         if "tx_power_dbm" in params:
-            delta = float(params["tx_power_dbm"]) - 14.0
+            power = float(params["tx_power_dbm"])
+            delta = power - n.tx_power_dbm
             n.rssi_seed += delta * 0.8
+            n.tx_power_dbm = power
         if "rssi_threshold" in params:
             thr = float(params["rssi_threshold"])
             n.band_split = max(0.15, min(0.85, 0.45 + (thr + 75) * 0.02))
