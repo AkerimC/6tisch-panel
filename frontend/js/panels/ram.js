@@ -1,7 +1,9 @@
 import { api, el, fmtDT } from "../api.js";
 
 const PAGE_SIZE = 100;
-const HOURS = [1, 6, 24, 72, 168, 720];
+// Retention in the store is 48 h (backend/store.py purge_older_than); offering a
+// longer window would silently return a partial result.
+const HOURS = [1, 6, 12, 24, 48];
 const MODULE_NAMES = { 0x55: "CORE_NET_MAC" };
 const ERROR_NAMES = {
   0x31: "TX başarılı",

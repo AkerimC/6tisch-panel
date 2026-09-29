@@ -173,13 +173,22 @@ async def api_node(node_id: str):
     return {"node": node, "subtree": neighbors}
 
 
+def _check_hours(hours: float):
+    if not 0 < hours <= 720:
+        raise HTTPException(422, "hours must be in the range (0, 720]")
+
+
 @app.get("/api/history/{node_id}")
 async def api_history(node_id: str, hours: float = 24, step_s: int = 120):
+    _check_hours(hours)
+    if not 1 <= step_s <= 3600:
+        raise HTTPException(422, "step_s must be in the range [1, 3600]")
     return store.metrics_history(node_id, hours, step_s)
 
 
 @app.get("/api/energy")
 async def api_energy(hours: float = 24):
+    _check_hours(hours)
     return {"network": store.network_energy_series(hours, 300),
             "nodes": {nid: store.metrics_history(nid, hours, 300)
                       for nid in C.INSTRUMENTED}}
@@ -187,11 +196,13 @@ async def api_energy(hours: float = 24):
 
 @app.get("/api/slotlog")
 async def api_slotlog(hours: float = 24):
+    _check_hours(hours)
     return store.slot_usage_series(C.INSTRUMENTED, hours)
 
 
 @app.get("/api/duty/{node_id}")
 async def api_duty(node_id: str, hours: float = 24):
+    _check_hours(hours)
     return {"L": store.duty_series(node_id, hours, "L"),
             "O": store.duty_series(node_id, hours, "O"),
             "limits": {b: round(C.duty_limit_of(b) * 100, 1) for b in ("L", "O")}}
@@ -234,6 +245,8 @@ async def api_topology():
 
 @app.get("/api/events")
 async def api_events(limit: int = 40):
+    if not 1 <= limit <= 500:
+        raise HTTPException(422, "limit must be in the range [1, 500]")
     return store.recent_events(limit)
 
 
@@ -261,7 +274,9 @@ async def api_ingest(data: IngestIn):
     CoAP 5683 portu /s/metrics kaynagi ayni JSON formatini kabul eder."""
     try:
         ENGINE.ingest({k: v for k, v in data.model_dump().items() if v is not None})
-    except Exception as e:
+    except (KeyError, ValueError, TypeError) as e:
+        # Only client-side data problems are 4xx; a sqlite3.OperationalError or a
+        # genuine bug must stay a 5xx instead of leaking the internal message.
         raise HTTPException(400, str(e))
     return {"ok": True}
 

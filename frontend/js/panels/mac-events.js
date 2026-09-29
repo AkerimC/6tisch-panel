@@ -2,7 +2,9 @@ import { api, el, fmtDT } from "../api.js";
 import { svgEl } from "../charts.js";
 
 const PAGE_SIZE = 100;
-const HOURS = [1, 6, 24, 72, 168, 720];
+// Retention in the store is 48 h (backend/store.py purge_older_than); offering a
+// longer window would silently return a partial result.
+const HOURS = [1, 6, 12, 24, 48];
 const STATUS_LABELS = {
   received: "RX alındı",
   success: "TX başarılı",
@@ -72,7 +74,7 @@ function build(root) {
 
   const chartsCard = el("div", { class: "card", style: "margin-top:14px" });
   chartsCard.append(el("h3", {}, "TX/RX grafikleri",
-    el("small", {}, "Zaman, düğüm ve kanal filtreleri grafikleri etkiler; sonuç filtresi yalnızca olay listesini süzer.")));
+    el("small", {}, "Zaman, düğüm ve kanal filtreleri grafikleri etkiler; yön ve sonuç filtreleri yalnızca olay listesini süzer.")));
   const chartFilters = el("div", { class: "grid c3" });
   const channelDetail = el("select", { id: "mac-chart-channel-detail" });
   channelDetail.append(el("option", { value: "" }, "Tekil kanal seçin"));
@@ -193,28 +195,38 @@ function renderData(data) {
   view.latestData = data;
   const rows = data.records || [];
   view.total = Number(data.total || 0);
-  const counts = { tx: 0, rx: 0, success: 0, no_ack: 0 };
+  const counts = { tx: 0, rx: 0, success: 0, no_ack: 0, ack_tx: 0 };
   (data.summary || []).forEach(item => {
-    if (item.direction === "tx") counts.tx += item.count;
-    else counts.rx += item.count;
-    if (item.status === "success" && item.ack_expected) counts.success += item.count;
+    if (item.direction === "tx") {
+      counts.tx += item.count;
+      if (item.ack_expected) counts.ack_tx += item.count;
+    } else counts.rx += item.count;
+    // Same definition as the channel/node/link tables and the charts:
+    // every successful TX, including broadcast (ack_expected === 0).
+    if (item.direction === "tx" && item.status === "success") counts.success += item.count;
     if (item.status === "no_ack") counts.no_ack += item.count;
   });
   const kpis = document.getElementById("mac-event-kpis");
   kpis.replaceChildren(
-    kpi(String(counts.tx), "TX olayları"),
+    kpi(String(counts.tx), `TX olayları (${counts.ack_tx} ACK'li)`),
     kpi(String(counts.rx), "RX olayları"),
-    kpi(String(counts.success), "TX ACK başarılı"),
-    kpi(String(counts.no_ack), "TX ACK başarısız"),
+    kpi(String(counts.success), "TX başarılı"),
+    kpi(String(counts.no_ack), "TX ACK yok"),
   );
 
   const nodes = document.getElementById("mac-node");
   nodes.replaceChildren(el("option", { value: "" }, "Tüm düğümler"));
-  (data.nodes || []).forEach(id => nodes.append(el("option", { value: id }, id.toUpperCase())));
+  const knownNodes = data.nodes || [];
+  (knownNodes).forEach(id => nodes.append(el("option", { value: id }, id.toUpperCase())));
+  // If the selected node aged out of the window, drop the filter instead of
+  // silently keeping it in the query while the UI shows "Tüm düğümler".
+  if(view.node && !knownNodes.includes(view.node)) view.node = "";
   nodes.value = view.node;
   const channels = document.getElementById("mac-channel");
   channels.replaceChildren(el("option", { value: "" }, "Tüm kanallar"));
+  const knownChannels = (data.channels || []).map(String);
   (data.channels || []).forEach(ch => channels.append(el("option", { value: ch }, `Kanal ${ch}`)));
+  if(view.channel && !knownChannels.includes(String(view.channel))) view.channel = "";
   channels.value = view.channel;
 
   const summary = el("table", { class: "t" });
@@ -318,8 +330,11 @@ function renderData(data) {
   host.replaceChildren(rows.length ? table : el("div", { class: "hint" },
     "Bu filtrelerle TX/RX olayı bulunamadı. MAC olay gönderimini ve serial bridge'i kontrol edin."));
 
-  const first = view.total ? view.offset + 1 : 0;
-  const last = Math.min(view.offset + rows.length, view.total);
+  // view.offset can point past the end after a purge / aging out, which would
+  // render a label such as "201–150 / 150".
+  const safeOffset = view.total ? Math.min(view.offset, Math.max(0, view.total - 1)) : 0;
+  const first = view.total ? safeOffset + 1 : 0;
+  const last = Math.min(safeOffset + rows.length, view.total);
   document.getElementById("mac-event-page-label").textContent = `${first}–${last} / ${view.total}`;
   document.getElementById("mac-event-prev").disabled = view.offset === 0;
   document.getElementById("mac-event-next").disabled = view.offset + rows.length >= view.total;

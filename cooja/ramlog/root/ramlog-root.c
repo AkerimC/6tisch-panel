@@ -133,7 +133,10 @@ mac_event_rx_callback(struct simple_udp_connection *connection,
                          | ((uint32_t)data[offset + 7] << 16)
                          | ((uint32_t)data[offset + 8] << 8)
                          | (uint32_t)data[offset + 9];
-    if((direction != 1 && direction != 2) || data[offset + 1] == 0) {
+    /* Channel 0 is a real carrier in the 868 MHz plan (869.525 MHz, Band O) and
+       HOPSEQ uses it 3 times out of 7, so it must not be treated as "unset".
+       Only the direction byte is validated here; the producer owns the channel. */
+    if(direction != 1 && direction != 2) {
       continue;
     }
     printf("{\"kind\":\"mac_event\",\"node_id\":\"%04x\","

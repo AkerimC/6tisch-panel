@@ -373,7 +373,10 @@ class Engine:
         dead = []
         for ws in list(self.ws_clients):
             try:
-                await ws.send_text(msg)
+                # send_text applies backpressure: a client that stops reading
+                # (backgrounded tab, throttled window) would otherwise block
+                # this coroutine -- and the whole 1 Hz engine tick -- forever.
+                await asyncio.wait_for(ws.send_text(msg), timeout=5)
             except Exception:
                 dead.append(ws)
         for ws in dead:

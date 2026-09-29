@@ -87,6 +87,9 @@ footer {
 }
 
 /* ── kartlar ── */
+/* Author-origin .grid/.card display rules outrank the UA [hidden] rule, so
+   element.hidden = true would otherwise have no effect on grid containers. */
+[hidden] { display: none !important; }
 .grid { display: grid; gap: 14px; }
 .grid.c2 { grid-template-columns: 1fr 1fr; }
 .grid.c3 { grid-template-columns: repeat(3, 1fr); }

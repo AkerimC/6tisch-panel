@@ -1,6 +1,7 @@
 """Tests for the existing 4eMAC RAMLOG packet-to-panel ingestion path."""
 import asyncio
 import json
+import socket
 import sqlite3
 import tempfile
 import time
@@ -16,7 +17,7 @@ from fastapi import HTTPException
 from backend import store
 from backend.main import (MacEventIn, RamLogIn, api_mac_event_ingest,
                           api_mac_events, api_ramlog, api_ramlog_ingest)
-from cooja.ramlog.serial_bridge import parse_record, post_record
+from cooja.ramlog.serial_bridge import bridge, parse_record, post_record
 
 
 class RamLogTests(unittest.TestCase):
@@ -289,6 +290,238 @@ class RamLogTests(unittest.TestCase):
                        if plugin.findtext("mote_arg") == "0"), None)
         self.assertIsNotNone(serial)
         self.assertEqual(serial.findtext("plugin_config/port"), "60001")
+
+
+class MacEventRegressionTests(unittest.TestCase):
+    """Regressions found while reviewing the TX/RX statistics feature."""
+
+    ROOT_C = Path(__file__).parents[1] / "cooja" / "ramlog" / "root" / "ramlog-root.c"
+
+    def test_root_receiver_does_not_drop_channel_zero(self):
+        # Channel 0 is a real 868 MHz carrier (CARRIERS[0] = 869.525 MHz) and
+        # HOPSEQ = [2, 0, 1, 0, 2, 0, 1] uses it 3 times out of 7. The receiver
+        # used to `continue` on it, silently discarding ~43% of the network's
+        # events before they ever reached the panel.
+        source = self.ROOT_C.read_text()
+        self.assertNotIn("data[offset + 1] == 0", source)
+        # The producer is authoritative for the channel byte.
+        self.assertIn("data[offset + 1],", source)
+
+    def test_channel_zero_survives_bridge_and_api(self):
+        event = parse_record(
+            b'{"kind":"mac_event","node_id":"0101","direction":"tx",'
+            b'"peer_node":"0005","channel":0,"status":"success",'
+            b'"ack_expected":true,"device_ts":12}'
+        )
+        self.assertEqual(event["channel"], 0)
+        # The API model must accept it too.
+        self.assertEqual(MacEventIn(**{k: v for k, v in event.items()
+                                       if k != "kind"}).channel, 0)
+
+    def test_mac_event_wire_layout_is_ten_bytes_big_endian(self):
+        # Mirrors mac-event-send.c send_batch(): header 0x06 + count, then
+        # direction, channel, status, flags, peer_node (2, BE), device_ts (4, BE).
+        direction, channel, status, flags = 1, 0, 0, 1
+        peer_node, device_ts = 0x0105, 0x01020304
+        record = bytes([
+            0x06, 1,
+            direction, channel, status, flags,
+            peer_node >> 8, peer_node & 0xFF,
+            (device_ts >> 24) & 0xFF, (device_ts >> 16) & 0xFF,
+            (device_ts >> 8) & 0xFF, device_ts & 0xFF,
+        ])
+        self.assertEqual(len(record), 2 + 10)
+        self.assertEqual(record[2 + 4], 0x01)
+        self.assertEqual(record[2 + 5], 0x05)
+        self.assertEqual(record[2 + 6:2 + 10], b"\x01\x02\x03\x04")
+        # The receiver rejects a length that does not match count exactly.
+        self.assertEqual(len(record) - 2, record[1] * 10)
+
+    def test_mac_event_hours_filter_excludes_rows_outside_window(self):
+        previous_conn = getattr(store._local, "conn", None)
+        if previous_conn is not None:
+            previous_conn.close()
+            del store._local.conn
+        old_path = store.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                store.DB_PATH = str(Path(tmp) / "window-test.db")
+                store.init()
+                now = time.time()
+                store.insert_mac_event(now, "0101", "tx", 11, "success", True, 5,
+                                       peer_node="0005")
+                store.insert_mac_event(now - 3 * 3600, "0101", "tx", 11, "success",
+                                       True, 4, peer_node="0005")
+                self.assertEqual(store.mac_event_count(hours=1), 1)
+                self.assertEqual(len(store.mac_event_history(hours=1)), 1)
+                self.assertEqual(
+                    sum(r["count"] for r in store.mac_event_summary(hours=1)), 1
+                )
+                self.assertEqual(store.mac_event_filter_values(hours=1)[1], [11])
+        finally:
+            store.DB_PATH = old_path
+            conn = getattr(store._local, "conn", None)
+            if conn is not None:
+                conn.close()
+                del store._local.conn
+            if previous_conn is not None:
+                store._local.conn = previous_conn
+
+    def test_mac_event_summary_denominator_ignores_status_and_direction(self):
+        # The channel/node/link success rate divides successes by ALL TX
+        # attempts, so the summary must keep every status and direction even
+        # when the event list is filtered (backend/main.py forces them to None).
+        previous_conn = getattr(store._local, "conn", None)
+        if previous_conn is not None:
+            previous_conn.close()
+            del store._local.conn
+        old_path = store.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                store.DB_PATH = str(Path(tmp) / "denominator-test.db")
+                store.init()
+                now = time.time()
+                store.insert_mac_event(now, "0101", "tx", 11, "success", True, 5,
+                                       peer_node="0005")
+                store.insert_mac_event(now, "0101", "tx", 11, "no_ack", True, 6,
+                                       peer_node="0005")
+                store.insert_mac_event(now, "0101", "rx", 11, "received", False, 7,
+                                       peer_node="0005")
+
+                rows = asyncio.run(api_mac_events(hours=1, status="success"))
+                self.assertTrue(all(r["status"] == "success" for r in rows["records"]))
+                # ... but the summary still carries no_ack, so the frontend
+                # divides 1 success by 2 TX attempts, not by 1.
+                self.assertEqual(
+                    sorted(r["status"] for r in rows["summary"]),
+                    ["no_ack", "received", "success"],
+                )
+                attempts = sum(r["count"] for r in rows["summary"]
+                               if r["direction"] == "tx")
+                self.assertEqual(attempts, 2)
+
+                rows = asyncio.run(api_mac_events(hours=1, direction="rx"))
+                self.assertTrue(all(r["direction"] == "rx" for r in rows["records"]))
+                self.assertEqual(
+                    {r["direction"] for r in rows["summary"]}, {"tx", "rx"}
+                )
+        finally:
+            store.DB_PATH = old_path
+            conn = getattr(store._local, "conn", None)
+            if conn is not None:
+                conn.close()
+                del store._local.conn
+            if previous_conn is not None:
+                store._local.conn = previous_conn
+
+    def test_purge_older_than_removes_stale_events(self):
+        previous_conn = getattr(store._local, "conn", None)
+        if previous_conn is not None:
+            previous_conn.close()
+            del store._local.conn
+        old_path = store.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                store.DB_PATH = str(Path(tmp) / "purge-test.db")
+                store.init()
+                now = time.time()
+                store.insert_mac_event(now, "0101", "tx", 11, "success", True, 5,
+                                       peer_node="0005")
+                store.insert_mac_event(now - 72 * 3600, "0101", "tx", 11, "success",
+                                       True, 4, peer_node="0005")
+                store.purge_older_than(48)
+                self.assertEqual(store.mac_event_count(hours=1), 1)
+                self.assertEqual(
+                    store.conn().execute("SELECT COUNT(*) AS n FROM mac_events")
+                    .fetchone()["n"],
+                    1,
+                )
+        finally:
+            store.DB_PATH = old_path
+            conn = getattr(store._local, "conn", None)
+            if conn is not None:
+                conn.close()
+                del store._local.conn
+            if previous_conn is not None:
+                store._local.conn = previous_conn
+
+    def test_ui_time_ranges_fit_within_retention(self):
+        # store.purge_older_than is called with 48 h; offering a longer window in
+        # the UI would silently return a partial result.
+        retention = 48
+        for panel in ("mac-events.js", "ram.js"):
+            source = (Path(__file__).parents[1] / "frontend" / "js" / "panels"
+                      / panel).read_text()
+            start = source.index("const HOURS = [")
+            end = source.index("]", start)
+            hours = [int(v) for v in source[start + len("const HOURS = ["):end].split(",")]
+            self.assertLessEqual(max(hours), retention, panel)
+
+    def test_serial_bridge_survives_an_overlong_line(self):
+        # A verbose Contiki log line must not tear the connection down: the
+        # records queued behind it would be lost with the socket.
+        received = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers["Content-Length"])
+                received.append(json.loads(self.rfile.read(length)))
+                body = b'{"ok":true}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        api = HTTPServer(("127.0.0.1", 0), Handler)
+        api_port = api.server_address[1]
+        Thread(target=api.serve_forever, daemon=True).start()
+
+        overlong = b"x" * 4000
+        good = (b'{"node_id":"0101","module_id":2,"error_code":49,"device_ts":7}\n')
+        serial = socket.socket()
+        serial.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        serial.bind(("127.0.0.1", 0))
+        serial.listen(4)
+        serial_port = serial.getsockname()[1]
+        connections = []
+
+        def serve():
+            while True:
+                try:
+                    conn, _ = serial.accept()
+                except OSError:
+                    return
+                connections.append(conn)
+                try:
+                    conn.sendall(overlong + b"\n" + good)
+                except OSError:
+                    pass
+                time.sleep(1.5)
+
+        Thread(target=serve, daemon=True).start()
+
+        thread = Thread(
+            target=bridge, args=("127.0.0.1", serial_port,
+                                 f"http://127.0.0.1:{api_port}/api/ramlog"),
+            daemon=True,
+        )
+        thread.start()
+        deadline = time.time() + 12
+        while time.time() < deadline and not received:
+            time.sleep(0.2)
+
+        api.shutdown()
+        serial.close()
+        for conn in connections:
+            conn.close()
+        self.assertTrue(received, "record behind the over-long line was not forwarded")
+        self.assertEqual(received[0]["node_id"], "0101")
+        # A single connection: the bridge must not have reconnected.
+        self.assertEqual(len(connections), 1)
 
 
 if __name__ == "__main__":

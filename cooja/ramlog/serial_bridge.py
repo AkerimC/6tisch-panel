@@ -121,12 +121,27 @@ def bridge(host, port, api_url):
                 sock.settimeout(None)
                 delay = 1
                 with sock.makefile("rb") as stream:
+                    overlong = 0
                     while True:
                         raw = stream.readline(MAX_LINE + 1)
                         if not raw:
                             raise ConnectionError("Cooja serial socket closed")
-                        if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
-                            raise ConnectionError("serial line is too long or incomplete")
+                        if not raw.endswith(b"\n"):
+                            # Over-length line: the Cooja serial stream also carries
+                            # verbose Contiki log output. Drain to the end of this
+                            # frame and keep the connection -- raising here would drop
+                            # every record buffered between this line and a reconnect.
+                            overlong += 1
+                            drained = len(raw)
+                            for chunk in iter(lambda: stream.readline(MAX_LINE + 1), b""):
+                                drained += len(chunk)
+                                if chunk.endswith(b"\n"):
+                                    break
+                            if overlong == 1 or overlong % 100 == 0:
+                                print(f"skipped over-long serial line (> {MAX_LINE} "
+                                      f"bytes, drained {drained}); total skipped: "
+                                      f"{overlong}", flush=True)
+                            continue
                         # Cooja serial also carries Contiki log lines; JSONL only is RAMLOG.
                         if not raw.lstrip().startswith(b"{"):
                             continue

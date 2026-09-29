@@ -83,6 +83,12 @@ def init():
         c.execute("ALTER TABLE mac_events ADD COLUMN peer_node TEXT")
     c.execute("CREATE INDEX IF NOT EXISTS ix_mac_events_peer_received "
               "ON mac_events(peer_node, received_ts)")
+    # Created after the migration because it references peer_node. Covers the
+    # 6-column GROUP BY of mac_event_summary, which otherwise builds a temporary
+    # B-tree over every row in the window.
+    c.execute("CREATE INDEX IF NOT EXISTS ix_mac_events_agg ON mac_events("
+              "received_ts, node, peer_node, direction, channel, status, "
+              "ack_expected)")
     c.commit()
 
 
