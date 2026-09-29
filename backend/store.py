@@ -34,6 +34,25 @@ CREATE TABLE IF NOT EXISTS duty_windows (
     used_pct REAL, denied REAL, deferral REAL
 );
 CREATE INDEX IF NOT EXISTS ix_duty_ts ON duty_windows(ts);
+CREATE TABLE IF NOT EXISTS ram_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    received_ts REAL NOT NULL, node TEXT NOT NULL,
+    module_id INTEGER NOT NULL, error_code INTEGER NOT NULL,
+    device_ts INTEGER NOT NULL, source_addr TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ramlog_node_ts ON ram_logs(node, received_ts);
+CREATE INDEX IF NOT EXISTS ix_ramlog_module_ts ON ram_logs(module_id, received_ts);
+CREATE INDEX IF NOT EXISTS ix_ramlog_node_module_ts ON ram_logs(node, module_id, received_ts);
+CREATE TABLE IF NOT EXISTS mac_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    received_ts REAL NOT NULL, node TEXT NOT NULL,
+    direction TEXT NOT NULL, channel INTEGER NOT NULL,
+    status TEXT NOT NULL, ack_expected INTEGER NOT NULL,
+    device_ts INTEGER NOT NULL, source_addr TEXT, peer_node TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_mac_events_received ON mac_events(received_ts);
+CREATE INDEX IF NOT EXISTS ix_mac_events_node_received ON mac_events(node, received_ts);
+CREATE INDEX IF NOT EXISTS ix_mac_events_channel_received ON mac_events(channel, received_ts);
 CREATE TABLE IF NOT EXISTS events (
     ts REAL, sev TEXT, kind TEXT, node TEXT, msg TEXT, data TEXT
 );
@@ -57,8 +76,14 @@ def conn() -> sqlite3.Connection:
 
 
 def init():
-    conn().executescript(SCHEMA)
-    conn().commit()
+    c = conn()
+    c.executescript(SCHEMA)
+    columns = {row["name"] for row in c.execute("PRAGMA table_info(mac_events)")}
+    if "peer_node" not in columns:
+        c.execute("ALTER TABLE mac_events ADD COLUMN peer_node TEXT")
+    c.execute("CREATE INDEX IF NOT EXISTS ix_mac_events_peer_received "
+              "ON mac_events(peer_node, received_ts)")
+    c.commit()
 
 
 def is_empty() -> bool:
@@ -139,6 +164,137 @@ def insert_config(ts, node, params, status, method, target):
 
 def get_nodes():
     return [dict(r) for r in conn().execute("SELECT * FROM nodes").fetchall()]
+
+
+def insert_ram_log(received_ts, node, module_id, error_code, device_ts, source_addr=None):
+    c = conn()
+    c.execute(
+        "INSERT INTO ram_logs(received_ts,node,module_id,error_code,device_ts,source_addr) "
+        "VALUES(?,?,?,?,?,?)",
+        (received_ts, node, module_id, error_code, device_ts, source_addr),
+    )
+    c.commit()
+
+
+def _ram_log_filters(hours, node=None, module_id=None):
+    filters = ["received_ts > ?"]
+    params = [time.time() - hours * 3600]
+    if node is not None:
+        filters.append("node = ?")
+        params.append(node)
+    if module_id is not None:
+        filters.append("module_id = ?")
+        params.append(module_id)
+    return filters, params
+
+
+def ram_log_count(hours=24, node=None, module_id=None):
+    filters, params = _ram_log_filters(hours, node, module_id)
+    row = conn().execute(
+        "SELECT COUNT(*) AS total FROM ram_logs WHERE " + " AND ".join(filters),
+        params,
+    ).fetchone()
+    return row["total"]
+
+
+def ram_log_filters(hours=24):
+    since = time.time() - hours * 3600
+    c = conn()
+    nodes = c.execute(
+        "SELECT DISTINCT node FROM ram_logs WHERE received_ts > ? ORDER BY node",
+        (since,),
+    ).fetchall()
+    modules = c.execute(
+        "SELECT DISTINCT module_id FROM ram_logs WHERE received_ts > ? ORDER BY module_id",
+        (since,),
+    ).fetchall()
+    return ([row["node"] for row in nodes],
+            [row["module_id"] for row in modules])
+
+
+def ram_log_history(hours=24, node=None, module_id=None, limit=100, offset=0):
+    filters, params = _ram_log_filters(hours, node, module_id)
+    params.append(limit)
+    params.append(offset)
+    rows = conn().execute(
+        "SELECT received_ts,node,module_id,error_code,device_ts,source_addr "
+        "FROM ram_logs WHERE " + " AND ".join(filters) +
+        " ORDER BY received_ts DESC, id DESC LIMIT ? OFFSET ?",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_mac_event(received_ts, node, direction, channel, status,
+                     ack_expected, device_ts, source_addr=None, peer_node=None):
+    c = conn()
+    c.execute(
+        "INSERT INTO mac_events(received_ts,node,direction,channel,status,"
+        "ack_expected,device_ts,source_addr,peer_node) VALUES(?,?,?,?,?,?,?,?,?)",
+        (received_ts, node, direction, channel, status, int(ack_expected),
+         device_ts, source_addr, peer_node),
+    )
+    c.commit()
+
+
+def _mac_event_filters(hours, node=None, direction=None, channel=None, status=None):
+    filters = ["received_ts > ?"]
+    params = [time.time() - hours * 3600]
+    for column, value in (("node", node), ("direction", direction),
+                          ("channel", channel), ("status", status)):
+        if value is not None:
+            filters.append(f"{column} = ?")
+            params.append(value)
+    return filters, params
+
+
+def mac_event_count(hours=24, node=None, direction=None, channel=None, status=None):
+    filters, params = _mac_event_filters(hours, node, direction, channel, status)
+    row = conn().execute(
+        "SELECT COUNT(*) AS total FROM mac_events WHERE " + " AND ".join(filters),
+        params,
+    ).fetchone()
+    return row["total"]
+
+
+def mac_event_history(hours=24, node=None, direction=None, channel=None,
+                      status=None, limit=100, offset=0):
+    filters, params = _mac_event_filters(hours, node, direction, channel, status)
+    params.extend((limit, offset))
+    rows = conn().execute(
+        "SELECT received_ts,node,peer_node,"
+        "CASE direction WHEN 'tx' THEN node ELSE peer_node END AS source_node,"
+        "CASE direction WHEN 'tx' THEN peer_node ELSE node END AS dest_node,"
+        "direction,channel,status,ack_expected,device_ts,source_addr "
+        "FROM mac_events WHERE " + " AND ".join(filters) +
+        " ORDER BY received_ts DESC,id DESC LIMIT ? OFFSET ?", params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mac_event_summary(hours=24, node=None, direction=None, channel=None, status=None):
+    filters, params = _mac_event_filters(hours, node, direction, channel, status)
+    rows = conn().execute(
+        "SELECT node,peer_node,direction,channel,status,ack_expected,COUNT(*) AS count "
+        "FROM mac_events WHERE " + " AND ".join(filters) +
+        " GROUP BY node,peer_node,direction,channel,status,ack_expected "
+        "ORDER BY channel,node,peer_node,direction,status,ack_expected", params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mac_event_filter_values(hours=24):
+    since = time.time() - hours * 3600
+    c = conn()
+    nodes = c.execute(
+        "SELECT DISTINCT node FROM mac_events WHERE received_ts > ? ORDER BY node",
+        (since,),
+    ).fetchall()
+    channels = c.execute(
+        "SELECT DISTINCT channel FROM mac_events WHERE received_ts > ? ORDER BY channel",
+        (since,),
+    ).fetchall()
+    return ([row["node"] for row in nodes], [row["channel"] for row in channels])
 
 
 def latest_metrics(limit_ts_s=4.0):
@@ -262,5 +418,7 @@ def purge_older_than(hours=48):
     c = conn()
     for t in ("metrics", "slot_usage", "duty_windows"):
         c.execute(f"DELETE FROM {t} WHERE ts<?", (cut,))
+    c.execute("DELETE FROM ram_logs WHERE received_ts<?", (cut,))
+    c.execute("DELETE FROM mac_events WHERE received_ts<?", (cut,))
     c.execute("DELETE FROM events WHERE ts<?", (cut,))
     c.commit()

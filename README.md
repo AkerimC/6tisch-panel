@@ -103,6 +103,43 @@ Sistem uçtan uca veri hattını birebir uygular: **cihaz → CoAP (JSON) → bo
 HTTP tercih edilirse: `POST /api/ingest` · şema: `GET /api/ingest/schema`
 Zorunlu alanlar: `node_id, rssi, snr, etx, energy_mj, slot_id, retrans`
 
+## 📥 4eMAC RAMLOG alımı
+
+`cooja/ramlog/ramlog-4emac.csc` 1 Exp5438 root + 32 istemcili Cooja senaryosudur. İstemci firmware’leri mevcut `os/services/ram-log-send` modülünü ve `MAKE_MAC_4EMAC` yapılandırmasını kullanır. İstemci, sentetik örnekler yerine 4eMAC MAC iletim sonuçlarını RAMLOG kuyruğuna kaydeder; sender bunları yalnızca kimlik doğrulama ve parent transmit cell koşulları sağlandığında yollar. Exp5438’in RAM sınırı için istemci başına neighbor havuzu 12, RAMLOG kuyruğu 32 kayıtla sınırlandırılmıştır. Cooja topolojisi 30 birim aralıklı ızgaradır; proje beacon aralığı katılımı hızlandırmak için 1–2 saniyedir. Root alıcı ve host serial bridge bu panel reposundadır; USB’deki Contiki ağacında hiçbir dosya değiştirilmez.
+
+Mevcut RAMLOG sender `0x04, kayıt_sayısı` başlığından sonra kayıt başına `module_id, error_code, device_uptime_u32_be` (6 bayt) gönderir. Root gönderen IPv6 adresinin son 16 bitini node ID olarak kullanır; tam IPv6 adresi ve kayıt alanları JSONL serial çıkışına yazılır, bridge de `POST /api/ramlog` ile panele yollar. `device_ts` cihaz açılışından beri saniyedir; panel ayrıca kendi alım zamanını saklar. RAMLOG UDP paketi log seviyesini taşımadığı için arayüzde yer almaz. Cooja testinde iletim durumları `module_id=0x55`, `error_code=0x31/0x32` olarak gözlemlendi.
+
+RAM Log panelinde zaman aralığı, düğüm ve modül filtreleri; açıklamalı bilinen MAC hata kodları, tam kayıt sayısı ve sayfalama bulunur. Liste her sayfada 100 kayıt gösterir; API varsayılanı da 100 kayıttır. Bilinmeyen modül ve hata kodları hex değerleriyle gösterilir.
+
+### 4eMAC TX/RX olayları
+
+Kanal ve ACK sonuçları mevcut 6 baytlık RAMLOG kaydına sığmadığından ayrı `0x06` UDP akışı kullanılır; `ram-log.c` ve RAMLOG `0x04` biçimi değiştirilmez. MAC iletim callback’i her sonucu gerçek radyo kanalında ve karşı düğüm ID’siyle toplar; alım sayacı yalnızca kabul edilmiş ve yinelenmemiş DATA/CMD çerçevelerini kapsar (ACK/EACK, EB ve kopya çerçeveler RX sayılmaz). Düğümler olayları 6’lı paketlerle root’a yollar; panel root seri JSONL hattını paylaşarak `POST /api/mac-events` ile `mac_events` tablosuna kaydeder. Başarı `MAC_TX_OK`/ACK, başarısız ACK sonucu `MAC_TX_NOACK` olarak ayrılır; her olayda cihaz uptime’ı ve panel alım zamanı tutulur.
+
+**TX/RX İstatistik** sekmesi her kanal ve her node için `başarılı TX / toplam TX` ile başarı yüzdesini (ör. `9/10 · %90`) ve kabul edilen RX sayısını gösterir. Kaynak→hedef node’a göre link istatistiği ve olay detayında yön bilgisi de bulunur; routed TX/RX için bunlar fiziksel 4eMAC komşusunu gösterir. Zaman, node, yön, kanal ve sonuç filtreleri olay listesini daraltır; başarı oranının paydası filtreyle başarı sonucuna daralmaz. API `GET /api/mac-events?hours=24` olup `limit`/`offset` ile sayfalanır. Eski MAC olayları RAMLOG ve diğer zaman serileriyle aynı saklama süresi politikasında temizlenir.
+
+**Gönderim sıklığı notu:** değiştirme yetkin olmayan mevcut `ram-log.c`, kayıt sayısı 8’i aşınca 2 saniyelik timer döngüsünde paket yollar. Bu entegrasyon sender’ın periyodunu değiştirmez; dolayısıyla “5 dakikada bir” davranışı mevcut kodda yoktur.
+
+### Çalıştırma
+
+1. Makefile’lar varsayılan olarak `/home/krm/contiki-ng` yolunu kullanır. Başka bir checkout kullanıyorsan `CONTIKI` değerini yalnızca panel reposundaki `cooja/ramlog/{root,node}/Makefile` dosyalarında güncelle.
+2. Paneli `./baslat.sh` ile başlat.
+3. `/home/krm/contiki-ng/tools/cooja` dizininde `./gradlew run --args="--gui --contiki=/home/krm/contiki-ng --logdir=/tmp/cooja-ramlog /home/krm/Resimler/harnes/Tubitak-arayuz/6tisch-panel/cooja/ramlog/ramlog-4emac.csc"` komutuyla Cooja’yı ve `cooja/ramlog/ramlog-4emac.csc` senaryosunu aç. Firmware’ler ilk yüklemede `TARGET=exp5438` ile oluşturulur; root’un MoteID’si 5’tir, sender hedef adresi buna göre ayarlanmıştır. Senaryo root serial socket’ini TCP `60001` portunda açar.
+4. Panel reposunda köprüyü başlat:
+
+   ```bash
+   python3 cooja/ramlog/serial_bridge.py \
+     --serial-host 127.0.0.1 --serial-port 60001 \
+     --api-url http://127.0.0.1:8680/api/ramlog
+   ```
+
+5. Panelde **RAM Log** sekmesini aç. `GET /api/ramlog?hours=24` kayıtları; `node_id` ve `module_id` ile filtrelenmiş listeyi döndürür. Kayıtlar `ram_logs` tablosunda tutulur; RSSI/ETX/enerji telemetrisiyle karıştırılmaz.
+
+Örnek bridge/API JSON’u:
+
+```json
+{"node_id":"0101","module_id":85,"error_code":49,"device_ts":368}
+```
+
 ## 📡 API Özeti
 
 | Uç | Amaç |
@@ -135,6 +172,7 @@ Panelde gönderdiğin CoAP PUT yalnızca loglanmaz — **simülasyon motorunu ge
 │   ├── store.py     # SQLite katmanı (WAL)
 │   └── main.py      # FastAPI: REST + WebSocket + CoAP sunucusu (:5683)
 ├── frontend/        # bağımlılık yok (framework'süz ES modülleri + SVG)
+├── cooja/ramlog/     # 4eMAC Cooja root/client, wire parser ve serial→HTTP köprüsü
 ├── data/            # dashboard.db (otomatik oluşur, git'e girmez)
 ├── baslat.sh · requirements.txt
 ```

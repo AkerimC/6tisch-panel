@@ -6,8 +6,10 @@ Calistir:  uvicorn backend.main:app --host 0.0.0.0 --port 8680
 """
 import asyncio
 import contextlib
+import ipaddress
 import json
 import os
+import re
 import time
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -103,6 +105,25 @@ class IngestIn(BaseModel):
     battery_v: Optional[float] = None
     tx_rate: Optional[float] = None
     parent: Optional[str] = None
+
+
+class RamLogIn(BaseModel):
+    node_id: str = Field(pattern=r"^[0-9a-fA-F]{4}$")
+    module_id: int = Field(ge=0, le=255)
+    error_code: int = Field(ge=0, le=255)
+    device_ts: int = Field(ge=0, le=4294967295)
+    source_addr: Optional[str] = Field(None, max_length=45)
+
+
+class MacEventIn(BaseModel):
+    node_id: str = Field(pattern=r"^[0-9a-fA-F]{4}$")
+    peer_node: Optional[str] = Field(None, pattern=r"^[0-9a-fA-F]{4}$")
+    direction: str = Field(pattern=r"^(tx|rx)$")
+    channel: int = Field(ge=0, le=255)
+    status: str = Field(pattern=r"^(received|success|no_ack|collision|deferred|error|fatal_error)$")
+    ack_expected: bool = False
+    device_ts: int = Field(ge=0, le=4294967295)
+    source_addr: Optional[str] = Field(None, max_length=45)
 
 
 # ---- API --------------------------------------------------------------------
@@ -254,6 +275,117 @@ async def api_ingest_schema():
                         "etx": 2.33, "energy_mj": 48.6, "slot_id": 12,
                         "ts": time.time(), "retrans": 3, "carrier": 0,
                         "band": "O"}}
+
+
+@app.post("/api/ramlog")
+async def api_ramlog_ingest(data: RamLogIn):
+    """Store one decoded 4eMAC RAMLOG event forwarded by the RPL root."""
+    source_addr = data.source_addr
+    if source_addr is not None:
+        try:
+            source_addr = str(ipaddress.IPv6Address(source_addr))
+        except ipaddress.AddressValueError:
+            raise HTTPException(422, "source_addr must be a valid IPv6 address")
+    received_ts = time.time()
+    node_id = data.node_id.lower()
+    store.insert_ram_log(received_ts, node_id, data.module_id, data.error_code,
+                         data.device_ts, source_addr)
+    return {"ok": True, "node_id": node_id, "received_ts": received_ts}
+
+
+@app.get("/api/ramlog")
+async def api_ramlog(hours: float = 24, node_id: Optional[str] = None,
+                     module_id: Optional[int] = None, limit: int = 100,
+                     offset: int = 0):
+    if not 0 < hours <= 720:
+        raise HTTPException(422, "hours must be in the range (0, 720]")
+    if node_id is not None and not re.fullmatch(r"[0-9a-fA-F]{4}", node_id):
+        raise HTTPException(422, "node_id must be a 4-digit hexadecimal MAC suffix")
+    if module_id is not None and not 0 <= module_id <= 255:
+        raise HTTPException(422, "module_id must be in the range [0, 255]")
+    if not 1 <= limit <= 500:
+        raise HTTPException(422, "limit must be in the range [1, 500]")
+    if offset < 0:
+        raise HTTPException(422, "offset must be non-negative")
+    nodes, modules = store.ram_log_filters(hours)
+    return {
+        "records": store.ram_log_history(
+            hours, node_id.lower() if node_id else None, module_id, limit, offset
+        ),
+        "total": store.ram_log_count(
+            hours, node_id.lower() if node_id else None, module_id
+        ),
+        "nodes": nodes,
+        "modules": modules,
+        "limit": limit,
+        "offset": offset,
+        "received_at": time.time(),
+    }
+
+
+@app.post("/api/mac-events")
+async def api_mac_event_ingest(data: MacEventIn):
+    if data.direction == "rx" and (data.status != "received" or data.ack_expected):
+        raise HTTPException(422, "RX events must use status=received and ack_expected=false")
+    if data.direction == "tx" and data.status == "received":
+        raise HTTPException(422, "TX events must describe the transmission result")
+    source_addr = data.source_addr
+    if source_addr is not None:
+        try:
+            source_addr = str(ipaddress.IPv6Address(source_addr))
+        except ipaddress.AddressValueError:
+            raise HTTPException(422, "source_addr must be a valid IPv6 address")
+    received_ts = time.time()
+    node_id = data.node_id.lower()
+    peer_node = data.peer_node.lower() if data.peer_node else None
+    if peer_node == "ffff":
+        peer_node = None
+    if peer_node == node_id:
+        raise HTTPException(422, "peer_node must differ from node_id")
+    store.insert_mac_event(received_ts, node_id, data.direction, data.channel,
+                           data.status, data.ack_expected, data.device_ts,
+                           source_addr, peer_node)
+    return {"ok": True, "node_id": node_id, "peer_node": peer_node,
+            "received_ts": received_ts}
+
+
+@app.get("/api/mac-events")
+async def api_mac_events(hours: float = 24, node_id: Optional[str] = None,
+                         direction: Optional[str] = None,
+                         channel: Optional[int] = None,
+                         status: Optional[str] = None, limit: int = 100,
+                         offset: int = 0):
+    if not 0 < hours <= 720:
+        raise HTTPException(422, "hours must be in the range (0, 720]")
+    if node_id is not None and not re.fullmatch(r"[0-9a-fA-F]{4}", node_id):
+        raise HTTPException(422, "node_id must be a 4-digit hexadecimal MAC suffix")
+    if direction is not None and direction not in ("tx", "rx"):
+        raise HTTPException(422, "direction must be tx or rx")
+    if channel is not None and not 0 <= channel <= 255:
+        raise HTTPException(422, "channel must be in the range [0, 255]")
+    valid_statuses = {"received", "success", "no_ack", "collision",
+                      "deferred", "error", "fatal_error"}
+    if status is not None and status not in valid_statuses:
+        raise HTTPException(422, "unsupported MAC event status")
+    if not 1 <= limit <= 500:
+        raise HTTPException(422, "limit must be in the range [1, 500]")
+    if offset < 0:
+        raise HTTPException(422, "offset must be non-negative")
+    filters = (hours, node_id.lower() if node_id else None, direction,
+               channel, status)
+    summary_filters = (hours, node_id.lower() if node_id else None, None,
+                       channel, None)
+    nodes, channels = store.mac_event_filter_values(hours)
+    return {
+        "records": store.mac_event_history(*filters, limit, offset),
+        "total": store.mac_event_count(*filters),
+        "summary": store.mac_event_summary(*summary_filters),
+        "nodes": nodes,
+        "channels": channels,
+        "limit": limit,
+        "offset": offset,
+        "received_at": time.time(),
+    }
 
 
 # ---- WebSocket (canli akis) -------------------------------------------------

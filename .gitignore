@@ -13,3 +13,9 @@ data/*.db-wal
 .DS_Store
 .idea/
 .vscode/
+
+# Cooja/MSP430 build outputs
+cooja/ramlog/root/build/
+cooja/ramlog/node/build/
+cooja/ramlog/root/obj_exp5438/
+cooja/ramlog/node/obj_exp5438/

@@ -6,6 +6,8 @@ import { renderSlotfreq, tickSlotfreq } from "./panels/slotfreq.js";
 import { renderTopology, tickTopology } from "./panels/topology.js";
 import { renderEnergy, tickEnergy } from "./panels/energy.js";
 import { renderRouting, tickRouting } from "./panels/routing.js";
+import { renderRam, tickRam } from "./panels/ram.js";
+import { renderMacEvents, tickMacEvents } from "./panels/mac-events.js";
 import { renderConfig } from "./panels/config.js";
 
 const $ = id => document.getElementById(id);
@@ -184,6 +186,8 @@ async function boot() {
     topology: renderTopology,
     energy: renderEnergy,
     routing: renderRouting,
+    ram: renderRam,
+    "mac-events": renderMacEvents,
     config: renderConfig,
   };
   initTabs((tab, sec) => sections[tab](sec));
@@ -193,6 +197,8 @@ async function boot() {
     tickSlotfreq(snap);
     tickTopology(snap);
     tickRouting(snap);
+    tickRam(snap);
+    tickMacEvents(snap);
     tickEnergy(snap);
   });
   setInterval(refreshHeaderNet, 15000);
