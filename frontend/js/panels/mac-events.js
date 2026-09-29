@@ -1,4 +1,5 @@
 import { api, el, fmtDT } from "../api.js";
+import { svgEl } from "../charts.js";
 
 const PAGE_SIZE = 100;
 const HOURS = [1, 6, 24, 72, 168, 720];
@@ -15,7 +16,8 @@ const STATUS_LABELS = {
 const view = {
   built: false, loading: false, refreshQueued: false, lastFetch: 0,
   hours: 24, node: "", direction: "", channel: "", status: "",
-  offset: 0, total: 0,
+  offset: 0, total: 0, channelDetail: "", nodeDetail: "", chartType: "bar",
+  latestData: null,
 };
 
 export function renderMacEvents(root) {
@@ -63,10 +65,64 @@ function build(root) {
     status.append(el("option", { value }, label)));
   status.addEventListener("change", () => { view.status = status.value; resetAndFetch(); });
 
-  filters.append(filter("Zaman aralığı", hours), filter("Düğüm", node),
+  filters.append(filter("Zaman aralığı (liste + grafikler)", hours), filter("Düğüm", node),
     filter("Yön", direction), filter("Fiziksel kanal", channel),
     filter("Sonuç", status));
   filterCard.append(filters);
+
+  const chartsCard = el("div", { class: "card", style: "margin-top:14px" });
+  chartsCard.append(el("h3", {}, "TX/RX grafikleri",
+    el("small", {}, "Zaman, düğüm ve kanal filtreleri grafikleri etkiler; sonuç filtresi yalnızca olay listesini süzer.")));
+  const chartFilters = el("div", { class: "grid c3" });
+  const channelDetail = el("select", { id: "mac-chart-channel-detail" });
+  channelDetail.append(el("option", { value: "" }, "Tekil kanal seçin"));
+  channelDetail.addEventListener("change", () => {
+    view.channelDetail = channelDetail.value;
+    if (view.latestData) renderCharts(view.latestData);
+  });
+  const nodeDetail = el("select", { id: "mac-chart-node-detail" });
+  nodeDetail.append(el("option", { value: "" }, "Tekil node seçin"));
+  nodeDetail.addEventListener("change", () => {
+    view.nodeDetail = nodeDetail.value;
+    if (view.latestData) renderCharts(view.latestData);
+  });
+  const chartType = el("select", { id: "mac-chart-type" });
+  chartType.append(el("option", { value: "bar" }, "Sütun grafik"),
+    el("option", { value: "line" }, "Çizgi grafik"));
+  chartType.value = view.chartType;
+  chartType.addEventListener("change", () => {
+    view.chartType = chartType.value;
+    if (view.latestData) renderCharts(view.latestData);
+  });
+  chartFilters.append(filter("Kanalı tekil incele", channelDetail),
+    filter("Node'u tekil incele", nodeDetail), filter("Grafik tipi", chartType));
+  chartsCard.append(chartFilters);
+
+  const channelChartsTitle = el("h3", { style: "margin-top:18px" }, "Kanal karşılaştırması");
+  const channelCharts = el("div", { class: "grid c2" });
+  channelCharts.append(chartPanel("Kanal bazında TX başarı oranı", "mac-chart-channels-tx"),
+    chartPanel("Kanal bazında kabul edilen RX", "mac-chart-channels-rx"));
+  chartsCard.append(channelChartsTitle, channelCharts);
+
+  const channelDetailTitle = el("h3", { id: "mac-chart-channel-title", style: "margin-top:18px" },
+    "Tekil kanal grafiği");
+  const channelDetailCharts = el("div", { id: "mac-chart-channel-detail-section", class: "grid c2" });
+  channelDetailCharts.append(chartPanel("Seçilen kanal · TX başarısı", "mac-chart-channel-one-tx"),
+    chartPanel("Seçilen kanal · RX", "mac-chart-channel-one-rx"));
+  chartsCard.append(channelDetailTitle, channelDetailCharts);
+
+  const nodeChartsTitle = el("h3", { style: "margin-top:18px" }, "Node karşılaştırması");
+  const nodeCharts = el("div", { class: "grid c2" });
+  nodeCharts.append(chartPanel("Node bazında TX başarı oranı", "mac-chart-nodes-tx"),
+    chartPanel("Node bazında kabul edilen RX", "mac-chart-nodes-rx"));
+  chartsCard.append(nodeChartsTitle, nodeCharts);
+
+  const nodeDetailTitle = el("h3", { id: "mac-chart-node-title", style: "margin-top:18px" },
+    "Tekil node grafiği");
+  const nodeDetailCharts = el("div", { id: "mac-chart-node-detail-section", class: "grid c2" });
+  nodeDetailCharts.append(chartPanel("Seçilen node · TX başarısı", "mac-chart-node-one-tx"),
+    chartPanel("Seçilen node · RX", "mac-chart-node-one-rx"));
+  chartsCard.append(nodeDetailTitle, nodeDetailCharts);
 
   const tableCard = el("div", { class: "card", style: "margin-top:14px" });
   tableCard.append(el("h3", {}, "TX/RX olayları",
@@ -88,12 +144,18 @@ function build(root) {
   });
   pager.append(prev, label, next);
   tableCard.append(pager);
-  root.append(kpis, summaryCard, filterCard, tableCard);
+  root.append(kpis, summaryCard, filterCard, chartsCard, tableCard);
   view.built = true;
 }
 
 function filter(title, input) {
   return el("label", { class: "f" }, title, input);
+}
+
+function chartPanel(title, id) {
+  const panel = el("div", { class: "card" });
+  panel.append(el("h3", {}, title), el("div", { id }));
+  return panel;
 }
 
 function resetAndFetch() {
@@ -128,6 +190,7 @@ async function refresh() {
 }
 
 function renderData(data) {
+  view.latestData = data;
   const rows = data.records || [];
   view.total = Number(data.total || 0);
   const counts = { tx: 0, rx: 0, success: 0, no_ack: 0 };
@@ -230,6 +293,8 @@ function renderData(data) {
   linkHost.replaceChildren(el("h3", {}, "Node’lar arası bağlantı istatistiği"),
     byLink.size ? linkTable : el("div", { class: "hint" }, "Henüz bağlantı istatistiği yok."));
 
+  renderCharts(data);
+
   const table = el("table", { class: "t" });
   table.append(el("tr", {}, el("th", {}, "Kaynak node"), el("th", {}, "Hedef node"),
     el("th", {}, "Raporlayan node"), el("th", {}, "Yön"),
@@ -274,6 +339,178 @@ function formatRate(success, attempts) {
   if (!attempts) return "—";
   const percent = 100 * success / attempts;
   return `${success}/${attempts} · %${percent.toLocaleString("tr-TR", { maximumFractionDigits: 1 })}`;
+}
+
+function renderCharts(data) {
+  const channels = new Map();
+  const nodes = new Map();
+  (data.summary || []).forEach(item => {
+    const channel = channels.get(item.channel) || { success: 0, attempts: 0, rx: 0 };
+    const node = nodes.get(item.node) || { success: 0, attempts: 0, rx: 0 };
+    if (item.direction === "rx") {
+      channel.rx += item.count;
+      node.rx += item.count;
+    } else {
+      channel.attempts += item.count;
+      node.attempts += item.count;
+      if (item.status === "success") {
+        channel.success += item.count;
+        node.success += item.count;
+      }
+    }
+    channels.set(item.channel, channel);
+    nodes.set(item.node, node);
+  });
+
+  const channelIds = [...channels.keys()].sort((a, b) => a - b);
+  const nodeIds = [...nodes.keys()].sort((a, b) => a.localeCompare(b));
+  updateChartSelect("mac-chart-channel-detail", channelIds.map(String), view.channelDetail,
+    value => { view.channelDetail = value; });
+  updateChartSelect("mac-chart-node-detail", nodeIds, view.nodeDetail,
+    value => { view.nodeDetail = value; });
+
+  const channelTx = channelIds.map(id => ({ label: `CH ${id}`, ...channels.get(id) }));
+  const channelRx = channelIds.map(id => ({ label: `CH ${id}`, value: channels.get(id).rx }));
+  const nodeTx = nodeIds.map(id => ({ label: id.toUpperCase(), ...nodes.get(id) }));
+  const nodeRx = nodeIds.map(id => ({ label: id.toUpperCase(), value: nodes.get(id).rx }));
+  renderStatChart("mac-chart-channels-tx", channelTx, "rate", "Kanal TX başarı oranı");
+  renderStatChart("mac-chart-channels-rx", channelRx, "count", "Kanal RX adedi");
+  renderStatChart("mac-chart-nodes-tx", nodeTx, "rate", "Node TX başarı oranı");
+  renderStatChart("mac-chart-nodes-rx", nodeRx, "count", "Node RX adedi");
+
+  const channelId = view.channelDetail === "" ? null : Number(view.channelDetail);
+  const channelDetail = channelId == null ? null : channels.get(channelId);
+  const channelSection = document.getElementById("mac-chart-channel-detail-section");
+  const channelTitle = document.getElementById("mac-chart-channel-title");
+  if (channelDetail) {
+    channelTitle.textContent = `Kanal ${channelId} · tekil grafikler`;
+    renderStatChart("mac-chart-channel-one-tx", [
+      { label: `CH ${channelId}`, ...channelDetail },
+    ], "rate", `Kanal ${channelId} TX başarı oranı`);
+    renderStatChart("mac-chart-channel-one-rx", [
+      { label: `CH ${channelId}`, value: channelDetail.rx },
+    ], "count", `Kanal ${channelId} kabul edilen RX`);
+    channelSection.hidden = false;
+  } else {
+    channelTitle.textContent = "Tekil kanal grafiği";
+    channelSection.hidden = true;
+  }
+
+  const nodeDetail = view.nodeDetail === "" ? null : nodes.get(view.nodeDetail);
+  const nodeSection = document.getElementById("mac-chart-node-detail-section");
+  const nodeTitle = document.getElementById("mac-chart-node-title");
+  if (nodeDetail) {
+    const id = view.nodeDetail.toUpperCase();
+    nodeTitle.textContent = `Node ${id} · tekil grafikler`;
+    renderStatChart("mac-chart-node-one-tx", [
+      { label: id, ...nodeDetail },
+    ], "rate", `Node ${id} TX başarı oranı`);
+    renderStatChart("mac-chart-node-one-rx", [
+      { label: id, value: nodeDetail.rx },
+    ], "count", `Node ${id} kabul edilen RX`);
+    nodeSection.hidden = false;
+  } else {
+    nodeTitle.textContent = "Tekil node grafiği";
+    nodeSection.hidden = true;
+  }
+}
+
+function updateChartSelect(id, values, selected, onChange) {
+  const select = document.getElementById(id);
+  const firstLabel = id === "mac-chart-channel-detail" ? "Tekil kanal seçin" : "Tekil node seçin";
+  select.replaceChildren(el("option", { value: "" }, firstLabel),
+    ...values.map(value => el("option", { value },
+      id === "mac-chart-channel-detail" ? `Kanal ${value}` : value.toUpperCase())));
+  const value = values.includes(selected) ? selected : "";
+  select.value = value;
+  onChange(value);
+}
+
+function renderStatChart(hostId, rows, kind, ariaLabel) {
+  const host = document.getElementById(hostId);
+  host.replaceChildren();
+  if (!rows.length) {
+    host.append(el("div", { class: "hint" }, "Seçilen zaman aralığında grafik verisi yok."));
+    return;
+  }
+
+  const width = 860, height = 290;
+  const left = 52, right = 18, top = 28, bottom = 58;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const color = view.chartType === "line"
+    ? (kind === "rate" ? "#ef4444" : "#fda4af")
+    : (kind === "rate" ? "#b7c4ff" : "#34d399");
+  const values = rows.map(row => kind === "rate"
+    ? (row.attempts ? row.success * 100 / row.attempts : 0)
+    : Math.max(0, Number(row.value) || 0));
+  const rawMax = kind === "rate" ? 100 : Math.max(1, ...values);
+  const max = kind === "rate" ? 100 : Math.max(1, Math.ceil(rawMax));
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${width} ${height}`, width: "100%", role: "img",
+    "aria-label": ariaLabel, style: "display:block;overflow:visible",
+  });
+  const title = svgEl("title", {}, svg);
+  title.textContent = ariaLabel;
+
+  const tickCount = kind === "rate" ? 4 : Math.min(4, max);
+  for (let i = 0; i <= tickCount; i++) {
+    const fraction = i / tickCount;
+    const value = max * fraction;
+    const y = top + plotHeight * (1 - fraction);
+    svgEl("line", { x1: left, y1: y, x2: width - right, y2: y,
+      stroke: "#35353b", "stroke-width": 1 }, svg);
+    const tick = svgEl("text", { x: left - 8, y: y + 4, fill: "#8f909a",
+      "font-size": 11, "text-anchor": "end" }, svg);
+    tick.textContent = kind === "rate" ? `${Math.round(value)}%`
+      : Math.round(value).toLocaleString("tr-TR");
+  }
+
+  const slotWidth = plotWidth / rows.length;
+  const barWidth = Math.min(48, Math.max(7, slotWidth * 0.58));
+  const points = rows.map((row, index) => ({
+    row,
+    x: left + slotWidth * index + slotWidth / 2,
+    y: top + plotHeight * (1 - values[index] / max),
+    value: values[index],
+  }));
+  if (view.chartType === "line" && points.length > 1) {
+    svgEl("polyline", {
+      points: points.map(point => `${point.x},${point.y}`).join(" "),
+      fill: "none", stroke: color, "stroke-width": 3,
+      "stroke-linecap": "round", "stroke-linejoin": "round",
+    }, svg);
+  }
+  rows.forEach((row, index) => {
+    const value = values[index];
+    const barHeight = value / max * plotHeight;
+    const x = left + slotWidth * index + (slotWidth - barWidth) / 2;
+    const y = top + plotHeight - barHeight;
+    const mark = view.chartType === "line"
+      ? svgEl("circle", { cx: points[index].x, cy: points[index].y, r: 4,
+        fill: color, stroke: "#fff", "stroke-width": 1.2 }, svg)
+      : svgEl("rect", { x, y, width: barWidth, height: Math.max(0, barHeight),
+        rx: 3, fill: color, opacity: 0.88 }, svg);
+    const detail = kind === "rate"
+      ? `TX ${row.success}/${row.attempts} · ${formatRate(row.success, row.attempts)}`
+      : `RX ${Math.round(value).toLocaleString("tr-TR")}`;
+    const tooltip = svgEl("title", {}, mark);
+    tooltip.textContent = `${row.label}: ${detail}`;
+
+    if (rows.length <= 20) {
+      const dataLabel = svgEl("text", { x: x + barWidth / 2, y: Math.max(top - 7, y - 6),
+        fill: "#e4e1e7", "font-size": 10, "text-anchor": "middle" }, svg);
+      dataLabel.textContent = kind === "rate"
+        ? (row.attempts ? `%${Math.round(value)}` : "—")
+        : Math.round(value).toLocaleString("tr-TR");
+    }
+
+    const category = svgEl("text", { x: x + barWidth / 2, y: height - 22,
+      fill: "#a5a4b0", "font-size": rows.length > 20 ? 8 : 10,
+      "text-anchor": "middle" }, svg);
+    category.textContent = row.label;
+  });
+  host.append(svg);
 }
 
 function showError(error) {
